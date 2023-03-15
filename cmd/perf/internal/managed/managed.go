@@ -38,7 +38,7 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/upbound/uptest/cmd/perf/internal/common"
+	"github.com/sergenyalcin/uptest/cmd/perf/internal/common"
 )
 
 // RunExperiment runs the experiment according to command-line inputs.

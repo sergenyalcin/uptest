@@ -19,7 +19,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/upbound/uptest/cmd/perf/internal"
+	"github.com/sergenyalcin/uptest/cmd/perf/internal"
 )
 
 func main() {

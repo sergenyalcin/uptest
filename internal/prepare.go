@@ -34,7 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kyaml "k8s.io/apimachinery/pkg/util/yaml"
 
-	"github.com/upbound/uptest/internal/config"
+	"github.com/sergenyalcin/uptest/internal/config"
 )
 
 var (

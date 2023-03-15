@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/upbound/uptest/cmd/perf/internal/common"
-	"github.com/upbound/uptest/cmd/perf/internal/managed"
+	"github.com/sergenyalcin/uptest/cmd/perf/internal/common"
+	"github.com/sergenyalcin/uptest/cmd/perf/internal/managed"
 
 	"github.com/prometheus/common/model"
 
