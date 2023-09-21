@@ -24,7 +24,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"text/template"
 	"time"
 
 	"github.com/pkg/errors"
@@ -49,12 +52,12 @@ import (
 // RunExperiment runs the experiment according to command-line inputs.
 // Firstly the input manifests are deployed. After the all MRs are ready, time to readiness metrics are calculated.
 // Then, by default, all deployed MRs are deleted.
-func RunExperiment(mrTemplatePaths map[string]int, clean bool, applyInterval time.Duration) ([]common.Result, error) {
+func RunExperiment(mrTemplatePaths map[string]int, clean bool, applyInterval time.Duration, raw string) ([]common.Result, error) {
 	var timeToReadinessResults []common.Result
 
 	client := createDynamicClient()
 
-	tmpFiles, err := applyResources(mrTemplatePaths, applyInterval)
+	tmpFiles, err := applyResources(mrTemplatePaths, applyInterval, raw)
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot apply resources")
 	}
@@ -69,17 +72,24 @@ func RunExperiment(mrTemplatePaths map[string]int, clean bool, applyInterval tim
 	}
 
 	if clean {
+		var wg sync.WaitGroup
 		log.Info("Deleting resources...")
 		for _, tmpFile := range tmpFiles {
-			if err := deleteResources(tmpFile); err != nil {
-				return nil, errors.Wrap(err, "cannot delete resources")
-			}
+			wg.Add(1)
+			tmpFile := tmpFile
+			go func() {
+				defer wg.Done()
+				if err := deleteResources(tmpFile); err != nil {
+					log.Warn(err)
+				}
+			}()
 		}
+		wg.Wait()
 	}
 	return timeToReadinessResults, nil
 }
 
-func applyResources(mrTemplatePaths map[string]int, applyInterval time.Duration) ([]string, error) { //nolint:gocyclo // easy to follow all cases here
+func applyResources(mrTemplatePaths map[string]int, applyInterval time.Duration, raw string) ([]string, error) { //nolint:gocyclo // easy to follow all cases here
 	switch applyInterval { //nolint:exhaustive // not necessary to handle all duration cases
 	case 0 * time.Second:
 		f, err := os.CreateTemp("/tmp", "")
@@ -87,12 +97,15 @@ func applyResources(mrTemplatePaths map[string]int, applyInterval time.Duration)
 			return nil, errors.Wrap(err, "cannot create input file")
 		}
 		for mrPath, count := range mrTemplatePaths {
-			m, err := readYamlFile(mrPath)
+			m, err := read(mrPath)
 			if err != nil {
 				return nil, errors.Wrap(err, "cannot read template file")
 			}
 			for i := 1; i <= count; i++ {
-				if err := createManifest(f, m, i); err != nil {
+				r := map[string]string{
+					raw: strconv.Itoa(i),
+				}
+				if err := createManifest(f, m, i, r); err != nil {
 					return nil, err
 				}
 			}
@@ -105,37 +118,94 @@ func applyResources(mrTemplatePaths map[string]int, applyInterval time.Duration)
 	default:
 		var tmpFiles []string
 		for mrPath, count := range mrTemplatePaths {
-			m, err := readYamlFile(mrPath)
+			m, err := read(mrPath)
 			if err != nil {
 				return nil, errors.Wrap(err, "cannot read template file")
 			}
+			var wg sync.WaitGroup
 			for i := 1; i <= count; i++ {
 				f, err := os.CreateTemp("/tmp", "")
 				if err != nil {
 					return nil, errors.Wrap(err, "cannot create input file")
 				}
-				if err := createManifest(f, m, i); err != nil {
+				r := map[string]string{
+					raw: strconv.Itoa(i),
+				}
+				if err := createManifest(f, m, i, r); err != nil {
 					return nil, err
 				}
-				if err := runApplyCommand(f); err != nil {
-					return nil, err
-				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := runApplyCommand(f); err != nil {
+						log.Warn(err)
+					}
+				}()
 				if i != count {
 					time.Sleep(applyInterval)
 				}
 				tmpFiles = append(tmpFiles, f.Name())
 			}
+			wg.Wait()
 		}
 		return tmpFiles, nil
 	}
 }
 
-func createManifest(f *os.File, m map[interface{}]interface{}, index int) error {
-	m["metadata"].(map[interface{}]interface{})["name"] = fmt.Sprintf("testperfrun%d", index)
+func read(pathOrURL string) (string, error) {
+	var content []byte
+	var err error
 
-	b, err := yaml.Marshal(m)
+	if strings.HasPrefix(pathOrURL, "http://") || strings.HasPrefix(pathOrURL, "https://") {
+		// Download the file if it's an HTTP/HTTPS URL
+		resp, err := http.Get(pathOrURL) //nolint:gosec,noctx // This is not a security-sensitive URL.
+		if err != nil {
+			return "", errors.Wrap(err, "cannot fetch URL")
+		}
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				log.Fatal("cannot close response body")
+			}
+		}()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to download; HTTP code: %d", resp.StatusCode)
+		}
+
+		content, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return "", errors.Wrap(err, "cannot read content from URL")
+		}
+	} else {
+		// If it's a local path, read the file directly
+		content, err = os.ReadFile(filepath.Clean(pathOrURL))
+		if err != nil {
+			return "", errors.Wrap(err, "cannot read file")
+		}
+	}
+
+	return string(content), nil
+}
+
+func render(tmpl string, data map[string]string) ([]byte, error) {
+	t, err := template.New("").Parse(tmpl)
 	if err != nil {
-		return errors.Wrap(err, "cannot marshal object")
+		return nil, errors.Wrap(err, "cannot create template object")
+	}
+
+	var b strings.Builder
+	if err := t.Execute(&b, data); err != nil {
+		return nil, errors.Wrapf(err, "cannot execute template %q")
+	}
+
+	return []byte(b.String()), nil
+}
+
+func createManifest(f *os.File, m string, index int, raw map[string]string) error {
+	b, err := render(m, raw)
+	if err != nil {
+		return err
 	}
 
 	if _, err := f.Write(b); err != nil {

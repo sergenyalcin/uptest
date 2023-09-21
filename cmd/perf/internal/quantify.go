@@ -47,6 +47,7 @@ type QuantifyOptions struct {
 	nodeIP            string
 	applyInterval     time.Duration
 	timeout           time.Duration
+	raw               string
 }
 
 // NewCmdQuantify creates a cobra command
@@ -72,7 +73,8 @@ func NewCmdQuantify() *cobra.Command {
 	o.cmd.Flags().BoolVar(&o.clean, "clean", true, "Delete deployed MRs")
 	o.cmd.Flags().StringVar(&o.nodeIP, "node", "", "Node IP")
 	o.cmd.Flags().DurationVar(&o.applyInterval, "apply-interval", 0*time.Second, "Elapsed time between applying two manifests to the cluster. Example = 10s. This means that examples will be applied every 10 seconds.")
-	o.cmd.Flags().DurationVar(&o.timeout, "timeout", 120*time.Minute, "Timeout for the experiment")
+	o.cmd.Flags().DurationVar(&o.timeout, "timeout", 1200*time.Minute, "Timeout for the experiment")
+	o.cmd.Flags().StringVar(&o.raw, "raw", "", "")
 
 	if err := o.cmd.MarkFlagRequired("provider-pods"); err != nil {
 		panic(err)
@@ -92,7 +94,7 @@ func (o *QuantifyOptions) Run(_ *cobra.Command, _ []string) error {
 	results := make(chan []common.Result, 5)
 	errChan := make(chan error, 1)
 	go func() {
-		timeToReadinessResults, err := managed.RunExperiment(o.mrPaths, o.clean, o.applyInterval)
+		timeToReadinessResults, err := managed.RunExperiment(o.mrPaths, o.clean, o.applyInterval, o.raw)
 		if err != nil {
 			errChan <- errors.Wrap(err, "cannot run experiment")
 			return
@@ -162,11 +164,21 @@ func (o *QuantifyOptions) processPods(timeToReadinessResults []common.Result) er
 			aggregatedCPURateResult.Peak = cpuRateResult.Peak
 		}
 
+		queryResultUpjetMetrics, err := o.CollectData(fmt.Sprintf(`sum(upjet_resource_ext_api_duration_sum{operation=~"connect|create|read"})/sum(upjet_resource_ext_api_duration_count{operation=~"connect|create|read"})`))
+		if err != nil {
+			return errors.Wrap(err, "cannot collect upjet data")
+		}
+		upjetMetricsResult, err := common.ConstructResult(queryResultUpjetMetrics, "External API Calls", "Seconds", providerPod)
+		if err != nil {
+			return errors.Wrap(err, "cannot construct upjet results")
+		}
+
 		for _, timeToReadinessResult := range timeToReadinessResults {
 			timeToReadinessResult.Print()
 		}
 		memoryResult.Print()
 		cpuRateResult.Print()
+		upjetMetricsResult.Print()
 	}
 
 	if len(o.providerPods) > 1 {
