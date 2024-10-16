@@ -163,9 +163,9 @@ func (o *QuantifyOptions) processPods(timeToReadinessResults []common.Result) er
 	if o.yamlOutput {
 		for _, timeToReadinessResult := range timeToReadinessResults {
 			b := strings.Builder{}
-			timeToReadinessResult.PrintYaml(&b)
-			aggregatedMemoryResult.PrintYaml(&b)
-			aggregatedCPURateResult.PrintYaml(&b)
+			timeToReadinessResult.PrintYaml(&b, "time_to_readiness")
+			aggregatedMemoryResult.PrintYaml(&b, "memory")
+			aggregatedCPURateResult.PrintYaml(&b, "cpu")
 
 			f, err := os.Create("results.yaml")
 			if err != nil {

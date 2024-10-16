@@ -112,10 +112,10 @@ func (r Result) Print() {
 	log.Info(fmt.Sprintf("Peak %s: %f %s \n", r.Metric, r.Peak, r.MetricUnit))
 }
 
-func (r Result) PrintYaml(b *strings.Builder) {
+func (r Result) PrintYaml(b *strings.Builder, yamlTag string) {
 	if r.PodName != "" {
 		b.WriteString(fmt.Sprintf("Pod: %s\n", r.PodName))
 	}
-	b.WriteString(fmt.Sprintf("Average%s: %f\n", r.Metric, r.Average))
-	b.WriteString(fmt.Sprintf("Peak%s: %f\n", r.Metric, r.Peak))
+	b.WriteString(fmt.Sprintf("average_%s: %f\n", yamlTag, r.Average))
+	b.WriteString(fmt.Sprintf("peak_%s: %f\n", yamlTag, r.Peak))
 }
